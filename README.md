@@ -75,6 +75,21 @@ Var[K] = m*a*b*(a+b+m)/((a+b)^2*(a+b+1))
 
 这些区间、阈值概率和未来计数**都条件于点估超参数**，不包含αβ估计误差，不是完整层级贝叶斯区间、频率覆盖保证、种子合格概率或自动发货依据。估计先验使用这些批次（包含本批），不冒充独立已知先验；未来预测针对同一批次，不是全新未知批。
 
+## 逐批留出检验
+
+只用本批计数拟合先验无法衡量对新批次的预测能力，因此每次运行在条件后验之外同时做逐批留出（leave-one-batch-out）检验：对每一批j，用其余批次按同一有界多起点流程重新拟合先验(α₋ⱼ,β₋ⱼ)，在留出批次的**原试种数**n_j上给出Beta-Binomial先验预测，与实测k_j对照：
+
+```text
+log P(K=k_j | n_j,α₋ⱼ,β₋ⱼ) = log C(n,k) + log B(α₋ⱼ+k, β₋ⱼ+n−k) − log B(α₋ⱼ,β₋ⱼ)
+95%等尾预测区间 = [betabinom.ppf(.025), betabinom.ppf(.975)]（计数尺度）
+```
+
+每折记录留一α/β、预测均值、95%预测区间、实测计数的对数概率与是否覆盖；总体评分为成功折的**平均对数概率**（对数评分，越高越好）与**区间覆盖率**。留出批次的k只用于评分，不进入该折训练（防泄漏由 `test_held_out_count_never_enters_own_fold` 等固定）。
+
+剩余训练批不足8、剩余计数全零或全一、或所有起点未通过收敛与投影梯度检查的折记为失败折，逐折写明原因（`insufficient_batches / degenerate_counts / fit_failure`），不跳过。存在失败折时汇总 `complete=false`，平均对数概率只覆盖成功折、明确标注**不是完整评分**，不能与完整评分直接比较；全部折失败时评分与覆盖率为null。
+
+检验只使用各批n/k与固定拟合流程，研究阈值与同批未来试种数不参与；改变它们 `validation` 与 `validation_hash` 不变（有测试固定），`fit_hash` 不变、`input_hash` 变。`validation`/`validation_hash` 为新增字段，旧运行结果没有该字段仍按原条件后验读取，前端只隐藏检验区块；原条件后验字段全部保留。检验仍是点估先验下的预测评分，不含超参数估计误差，不是种子合格保证。
+
 ## 开发与工程
 
 React18.3/ReactRouter7.18.5/TypeScript5.7/Vite6.4.6；Python3.11/FastAPI0.115/SQLAlchemy2/NumPy2.2/SciPy1.15；PostgreSQL16/Redis7/Nginx1.27。
@@ -94,7 +109,7 @@ npm ci
 npm run dev
 ```
 
-backend/src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}按来源、边际拟合、后验、运行、审阅拆分；backend/scripts/seed_demo.py；migration为可选索引，metadata首次建表，非独立全量DDL。frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}为React应用。
+backend/src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}按来源、边际拟合、后验、运行、审阅拆分；逐批留出检验在backend/src/services/validation_algorithm.py，其pytest套件在backend/tests（`python -m pytest tests`，覆盖防泄漏、失败折、阈值/未来m不变性与旧字段兼容）；backend/scripts/seed_demo.py；migration为可选索引，metadata首次建表，非独立全量DDL。frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}为React应用。
 
 角色枚举backend/constants/roles与frontend/constants/enums用于鉴权/显示，队列状态backend/constants/status与前端RunStatus用于worker/StatusBadge，审阅Literal在backend/schemas/note与model/service/前端ReviewStatus。环境变量COMPOSE_PROJECT_NAME、FRONTEND_PORT、BACKEND_PORT、DB_PORT、JWT_SECRET、SEED_DEMO在.env；DATABASE_URL/REDIS_URL由Compose定义。
 
